@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>N-Queen 탐색 트리 시뮬레이터</title>
+    
+    <!-- Fonts: Inter (Sans) & JetBrains Mono (Mono) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0052ff',
+                        'primary-active': '#003ecc',
+                        'primary-disabled': '#a8b8cc',
+                        canvas: '#ffffff',
+                        'surface-dark': '#0a0b0d',
+                        'surface-dark-elevated': '#16181c',
+                        ink: '#0a0b0d',
+                        body: '#5b616e',
+                        muted: '#7c828a',
+                        'on-dark': '#ffffff',
+                        'on-dark-soft': '#a8acb3',
+                        'semantic-up': '#05b169',
+                        'semantic-down': '#cf202f',
+                        hairline: '#dee1e6',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    borderRadius: {
+                        pill: '100px',
+                        xl: '24px',
+                    },
+                    spacing: {
+                        section: '96px',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- React & ReactDOM (CDN) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel for JSX (CDN) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { background-color: #0a0b0d; color: #ffffff; }
+        
+        /* Custom Scrollbar for Tree View */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0a0b0d; }
+        ::-webkit-scrollbar-thumb { background: #5b616e; border-radius: 100px; }
+        ::-webkit-scrollbar-thumb:hover { background: #7c828a; }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useRef } = React;
+
+        // --- 알고리즘 유효성 검사 로직 ---
+        const checkValid = (queens) => {
+            if (queens.length <= 1) return true;
+            const row = queens.length - 1;
+            const col = queens[row];
+            for (let i = 0; i < row; i++) {
+                const c = queens[i];
+                // 같은 열이거나 대각선 상에 있는 경우 충돌
+                if (c === col || Math.abs(c - col) === Math.abs(i - row)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        // --- 컴포넌트: 작은 체스판 (트리 노드용) ---
+        const MiniBoard = ({ n, queens, isValid }) => {
+            const cells = [];
+            for (let r = 0; r < n; r++) {
+                for (let c = 0; c < n; c++) {
+                    const isDark = (r + c) % 2 === 1;
+                    const hasQueen = queens[r] === c;
+                    const isConflict = hasQueen && r === queens.length - 1 && !isValid;
+
+                    cells.push(
+                        <div 
+                            key={`${r}-${c}`} 
+                            className={`w-4 h-4 flex items-center justify-center ${isDark ? 'bg-gray-800' : 'bg-gray-600'}`}
+                        >
+                            {hasQueen && (
+                                <div className={`w-2.5 h-2.5 rounded-full ${isConflict ? 'bg-semantic-down' : 'bg-primary'}`} />
+                            )}
+                        </div>
+                    );
+                }
+            }
+
+            return (
+                <div 
+                    className="grid gap-0 rounded overflow-hidden border border-gray-700" 
+                    style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}
+                >
+                    {cells}
+                </div>
+            );
+        };
+
+        // --- 컴포넌트: 재귀적 트리 노드 (가로 형태) ---
+        const TreeNode = ({ node, allNodes, currentNodeId, onNodeClick, n }) => {
+            const children = allNodes.filter(n => n.parentId === node.id);
+            const isCurrent = node.id === currentNodeId;
+
+            return (
+                <div className="flex items-center gap-6 relative">
+                    <div
+                        onClick={() => onNodeClick(node.id)}
+                        className={`
+                            cursor-pointer border-2 rounded-xl p-3 transition-all duration-200 bg-surface-dark-elevated
+                            ${isCurrent ? 'border-primary shadow-[0_0_15px_rgba(0,82,255,0.3)]' : 'border-transparent hover:border-gray-600'}
+                            ${!node.isValid ? 'opacity-60' : ''}
+                        `}
+                    >
+                        <div className="flex flex-col items-center gap-2">
+                            <span className="text-[11px] font-mono text-on-dark-soft">
+                                {node.queens.length === 0 ? 'Root' : `Row ${node.queens.length}`}
+                            </span>
+                            <MiniBoard n={n} queens={node.queens} isValid={node.isValid} />
+                            
+                            {!node.isValid && (
+                                <span className="text-[10px] text-semantic-down font-medium tracking-wide">충돌 (Invalid)</span>
+                            )}
+                            {node.isSolution && (
+                                <span className="text-[10px] text-semantic-up font-medium tracking-wide">해답 (Solution)</span>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 자식 노드 렌더링 */}
+                    {children.length > 0 && (
+                        <div className="flex flex-col gap-4 border-l border-gray-700 pl-6 py-2 relative">
+                            {/* 연결선 시각 보정 */}
+                            <div className="absolute left-[-2px] top-1/2 w-6 h-[1px] bg-gray-700 -translate-y-1/2 -z-10"></div>
+                            
+                            {children.map(child => (
+                                <div key={child.id} className="relative">
+                                    <div className="absolute left-[-24px] top-1/2 w-6 h-[1px] bg-gray-700 -translate-y-1/2 -z-10"></div>
+                                    <TreeNode 
+                                        node={child} 
+                                        allNodes={allNodes} 
+                                        currentNodeId={currentNodeId} 
+                                        onNodeClick={onNodeClick} 
+                                        n={n} 
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- 메인 앱 컴포넌트 ---
+        const App = () => {
+            const [n, setN] = useState(4);
+            const [nodes, setNodes] = useState([
+                { id: 0, parentId: null, queens: [], isValid: true, isSolution: false }
+            ]);
+            const [nextNodeId, setNextNodeId] = useState(1);
+            const [currentNodeId, setCurrentNodeId] = useState(0);
+            const treeContainerRef = useRef(null);
+
+            const currentNode = nodes.find(node => node.id === currentNodeId);
+            
+            // 트리 자동 스크롤
+            useEffect(() => {
+                if (treeContainerRef.current) {
+                    const container = treeContainerRef.current;
+                    container.scrollLeft = container.scrollWidth;
+                }
+            }, [currentNodeId, nodes.length]);
+
+            const resetGame = (size) => {
+                setN(size);
+                setNodes([{ id: 0, parentId: null, queens: [], isValid: true, isSolution: false }]);
+                setCurrentNodeId(0);
+                setNextNodeId(1);
+            };
+
+            const handleCellClick = (row, col) => {
+                // 탐색 불가능한 상태 처리
+                if (!currentNode.isValid) return; 
+                if (currentNode.isSolution) return;
+                
+                // 다음 배치할 행(Row)만 클릭 허용
+                if (row !== currentNode.queens.length) return;
+
+                const newQueens = [...currentNode.queens, col];
+                const isValid = checkValid(newQueens);
+                const isSolution = isValid && newQueens.length === n;
+
+                // 이미 탐색한 노드인지 확인 (중복 생성 방지)
+                let existingChild = nodes.find(
+                    node => node.parentId === currentNodeId && node.queens[row] === col
+                );
+
+                if (existingChild) {
+                    setCurrentNodeId(existingChild.id);
+                } else {
+                    const newNode = {
+                        id: nextNodeId,
+                        parentId: currentNodeId,
+                        queens: newQueens,
+                        isValid,
+                        isSolution
+                    };
+                    setNodes([...nodes, newNode]);
+                    setCurrentNodeId(newNode.id);
+                    setNextNodeId(nextNodeId + 1);
+                }
+            };
+
+            // 메인 체스판 렌더링
+            const renderBigBoard = () => {
+                const cells = [];
+                for (let r = 0; r < n; r++) {
+                    for (let c = 0; c < n; c++) {
+                        const isDark = (r + c) % 2 === 1;
+                        const hasQueen = currentNode.queens[r] === c;
+                        
+                        // 충돌 퀸 (가장 마지막에 놓은 유효하지 않은 퀸)
+                        const isConflictQueen = hasQueen && r === currentNode.queens.length - 1 && !currentNode.isValid;
+                        
+                        // 현재 상호작용 가능한(클릭 가능한) 타일인지 확인
+                        const isNextRow = r === currentNode.queens.length && currentNode.isValid && !currentNode.isSolution;
+
+                        cells.push(
+                            <div 
+                                key={`${r}-${c}`}
+                                onClick={() => handleCellClick(r, c)}
+                                className={`
+                                    w-full aspect-square flex items-center justify-center transition-all
+                                    ${isDark ? 'bg-surface-dark-elevated' : 'bg-[#23262f]'}
+                                    ${isNextRow ? 'cursor-pointer hover:ring-inset hover:ring-2 hover:ring-primary hover:bg-[rgba(0,82,255,0.15)]' : ''}
+                                `}
+                            >
+                                {hasQueen && (
+                                    <div 
+                                        className={`w-3/5 h-3/5 rounded-full shadow-lg ${isConflictQueen ? 'bg-semantic-down shadow-[0_0_12px_rgba(207,32,47,0.5)]' : 'bg-primary shadow-[0_0_12px_rgba(0,82,255,0.5)]'}`} 
+                                    />
+                                )}
+                                {isNextRow && !hasQueen && (
+                                    <div className="w-1/4 h-1/4 rounded-full bg-on-dark-soft opacity-0 hover:opacity-100 transition-opacity" />
+                                )}
+                            </div>
+                        );
+                    }
+                }
+
+                return (
+                    <div className="border border-gray-700 rounded-xl overflow-hidden shadow-2xl">
+                        <div 
+                            className="grid"
+                            style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}
+                        >
+                            {cells}
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col bg-surface-dark font-sans text-on-dark">
+                    {/* Coinbase 스타일 네비게이션 헤더 */}
+                    <header className="h-16 flex items-center justify-between px-8 border-b border-gray-800 bg-surface-dark/95 backdrop-blur z-10 sticky top-0">
+                        <div className="flex items-center gap-8">
+                            <h1 className="text-xl font-normal tracking-tight" style={{ fontWeight: 400 }}>
+                                Interactive <span className="font-mono text-primary font-medium">{n}-Queens</span>
+                            </h1>
+                            <div className="flex gap-2 bg-surface-dark-elevated p-1 rounded-pill">
+                                <button 
+                                    onClick={() => resetGame(4)}
+                                    className={`px-4 py-1.5 rounded-pill text-sm font-medium transition-all ${n === 4 ? 'bg-primary text-white shadow-sm' : 'text-on-dark-soft hover:text-white'}`}
+                                >
+                                    4-Queen
+                                </button>
+                                <button 
+                                    onClick={() => resetGame(5)}
+                                    className={`px-4 py-1.5 rounded-pill text-sm font-medium transition-all ${n === 5 ? 'bg-primary text-white shadow-sm' : 'text-on-dark-soft hover:text-white'}`}
+                                >
+                                    5-Queen
+                                </button>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={() => resetGame(n)}
+                            className="text-on-dark-soft hover:text-white text-sm font-medium transition-colors"
+                        >
+                            초기화 (Reset)
+                        </button>
+                    </header>
+
+                    {/* 메인 레이아웃 (좌측 보드 / 우측 트리) */}
+                    <main className="flex-1 flex overflow-hidden">
+                        
+                        {/* 좌측 패널: 인터랙티브 메인 보드 */}
+                        <div className="w-[450px] flex-shrink-0 border-r border-gray-800 p-8 flex flex-col bg-surface-dark-elevated/30">
+                            <div className="mb-8">
+                                <h2 className="text-2xl font-normal tracking-tight mb-2" style={{ fontWeight: 400 }}>체스판에 퀸 배치하기</h2>
+                                <p className="text-body text-sm leading-relaxed">
+                                    활성화된 가로줄(Row)을 클릭하여 퀸을 놓아보세요. 놓을 때마다 우측에 경우의 수가 트리로 기록됩니다. 우측 미니 보드를 클릭하면 과거 상태로 <strong>백트래킹</strong> 할 수 있습니다.
+                                </p>
+                            </div>
+                            
+                            <div className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full">
+                                {renderBigBoard()}
+                                
+                                <div className="mt-8 p-4 bg-surface-dark-elevated rounded-xl border border-gray-800 text-sm">
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <div className="w-3 h-3 rounded-full bg-primary"></div>
+                                        <span className="text-on-dark-soft font-mono">유효한 배치 (Valid)</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-3 h-3 rounded-full bg-semantic-down"></div>
+                                        <span className="text-on-dark-soft font-mono">충돌 발생 (Backtrack 필요)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 우측 패널: 탐색 트리 시각화 */}
+                        <div 
+                            ref={treeContainerRef}
+                            className="flex-1 overflow-auto p-12 relative"
+                        >
+                            <div className="min-w-max pb-16">
+                                <TreeNode 
+                                    node={nodes[0]} 
+                                    allNodes={nodes} 
+                                    currentNodeId={currentNodeId} 
+                                    onNodeClick={setCurrentNodeId}
+                                    n={n} 
+                                />
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
